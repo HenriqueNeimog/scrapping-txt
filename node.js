@@ -10,7 +10,7 @@ app.use(BodyParser.json());
 const PORT = process.env.PORT;
 const secretKey = process.env.SECRET_KEY;
 const hash = process.env.HASH;
-const headless = false;
+const headless = 'new';
 
 const authenticateBearer = (req, res, next) => {
     const token = req.headers.authorization;
