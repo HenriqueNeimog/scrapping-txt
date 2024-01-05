@@ -4,6 +4,7 @@ require('dotenv').config();
 const bcrypt = require('bcrypt');
 const BodyParser = require('body-parser');
 const { default: puppeteer } = require('puppeteer');
+const axios = require("axios")
 
 const app = express();
 app.use(BodyParser.json());
@@ -11,6 +12,10 @@ const PORT = process.env.PORT;
 const secretKey = process.env.SECRET_KEY;
 const hash = process.env.HASH;
 const headless = 'new';
+const limiteScrapping = process.env.LIMITADOR_PUPPETEER;
+const timesScrapping = [];
+
+process.setMaxListeners(31);
 
 const authenticateBearer = (req, res, next) => {
     const token = req.headers.authorization;
@@ -32,7 +37,17 @@ const authenticateBearer = (req, res, next) => {
     };
 };
 
-const scrapping = (link) => new Promise( async (resolve, reject) => {
+const scrapping = (link, webhook) => new Promise( async (resolve, reject) => {
+    if(timesScrapping[0] != undefined && timesScrapping.length >= limiteScrapping){
+        while(timesScrapping[0] > Date.now()){
+            await timer(1000);
+        };
+
+        timesScrapping.splice(0, 1);
+    };
+
+    timesScrapping.push(Date.now() + 1000*60);
+
     const browser = await puppeteer.launch({headless});
     try{
         const page = await browser.newPage();
@@ -57,10 +72,19 @@ const scrapping = (link) => new Promise( async (resolve, reject) => {
                 }
             };
 
+            let linksExternos = [];
+            for(let a of document.querySelectorAll('a[href]')){
+                if(new URL(a.href).hostname == new URL(location.href).hostname){
+                    linksExternos.push(a.href);
+                }
+            };
+
             return {
                 namespace: new URL(location.href).hostname,
                 text: document.querySelector('body').textContent,
                 imgs: linksImagens,
+                outrosLinks: linksExternos,
+                link: location.href,
                 status: 200
             };
         });
@@ -71,16 +95,87 @@ const scrapping = (link) => new Promise( async (resolve, reject) => {
         reject(err.toString())
     }
     await browser.close()
-})
+});
 
-app.post('/scrapping', authenticateBearer, (req, res) => {
-    scrapping(req.body.link).then(a => {
-        res.json(a)
+const timer = (ms) => new Promise( async (resolve, reject) => {
+    setTimeout(() => {
+        resolve();
+    }, ms);
+});
+
+app.post('/scrapping', authenticateBearer, async (req, res) => {
+
+    if(req.body.link == undefined || req.body.webhook == undefined){
+        return res.status(400).send("Está faltando dados no corpo da solicitação");
+    };
+
+    try{new URL(req.body.webhook);}catch{
+        return res.status(400).send("URL do Webhook está inválida");
+    };
+
+    let links = [];
+    let paginas = [];
+    let limite = 2000;
+    let namespace = "";
+
+    await scrapping(req.body.link).then(async a => {
+
+        namespace = a.namespace;
+
+        for(let b of a.outrosLinks){
+            if(!links.includes(b)){
+                links.push(b);
+            };
+        };
+        
+        res.sendStatus(200);
+        await axios.post(req.body.webhook, {
+            namespace: a.namespace,
+            text: a.text,
+            imgs: a.imgs
+        });
+        
     }).catch(err => {
+        console.log(err)
         return res.status(400).json({
             error: err,
         });
     });
+
+    // console.log(links)
+    for(let i = 0; i < links.length; i++){
+        scrapping(links[i]).then(async a => {
+            namespace = a.namespace;
+
+            for(let b of a.outrosLinks){
+                if(!links.includes(b)){
+                    links.push(b);
+                };
+            };
+
+            
+            await axios.post(req.body.webhook, {
+                namespace: a.namespace,
+                text: a.text,
+                imgs: a.imgs
+            });
+
+
+        }).catch(err => {
+            
+        })
+        
+        if(timesScrapping[0] != undefined && timesScrapping.length >= limiteScrapping){
+            while(timesScrapping[0] > Date.now()){
+                await timer(1000);
+            };
+
+            timesScrapping.splice(0, 1);
+        };
+    }
+    
+    console.log(Date.now())
+    console.log('finalizado')
 });
 
 app.post('/gerartoken', (req, res) => {
