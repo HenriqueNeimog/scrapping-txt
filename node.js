@@ -48,7 +48,7 @@ const scrapping = (link, webhook) => new Promise( async (resolve, reject) => {
 
     timesScrapping.push(Date.now() + 1000*60);
 
-    const browser = await puppeteer.launch({headless});
+    const browser = await puppeteer.launch({headless, args: ["--no-sandbox"]});
     try{
         const page = await browser.newPage();
         await page.setViewport({width: 1920, height: 1080});
